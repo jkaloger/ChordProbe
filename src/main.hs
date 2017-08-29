@@ -1,95 +1,63 @@
--- ChordProbe
--- Jack Kaloger, August 2017
+-- == == == == == == == == ==    ~Chord Probe~    == == == == == == == == == ==
+-- == == == == == == == == ==    ~Jack Kaloger~   == == == == == == == == == ==
+-- == == == == == == == == ==    ~August 2017~    == == == == == == == == == ==
+
 module Proj1 (initialGuess, nextGuess, GameState) where
 
 import Data.Char
 import Data.List
 
-type Pitch = (Char, Int)
+-- -- -- -- -- -- -- -- -- --       ~Types~       -- -- -- -- -- -- -- -- -- --
+
+type Note = Char
+type Octave = Int
+type Pitch = (Note, Octave)
 type Chord = (Pitch, Pitch, Pitch)
-type Feedback = (Int, Int, Int) -- (p,n,o) correct
-type GameState = (Chord, Feedback, [Chord]) -- guess, feedback, chords left
+type Feedback = (Int, Int, Int)
 
-notes = ['A','B','C','D','E','F','G']
+-- (previous guess and feedback), (Valid Pitches), (Known Pitches)
+type GameState = ( (Chord, Feedback), [Pitch], [Pitch] )
 
+-- -- -- -- -- -- -- -- -- --     ~Constants~     -- -- -- -- -- -- -- -- -- --
+
+-- all possible notes and octaves
+notes = ['A', 'B', 'C', 'D', 'E', 'F', 'G']
+octaves = [1..3]
+
+-- the empty pitch and chord used for empty guess history
+emptyPitch = (' ', 0)
+emptyChord = (emptyPitch, emptyPitch, emptyPitch)
+
+-- -- -- -- -- -- -- -- -- --   ~Main Functions~  -- -- -- -- -- -- -- -- -- --
+
+-- make the initial guess
 initialGuess :: ([String], GameState)
-initialGuess = 
-        let chords = 
-                let pitches = [(note, octave) | note <- notes, octave <- [1..3]]
-                in [(p1, p2, p3) | p1 <- pitches, p2 <- pitches, p3 <- pitches, p1 /= p2, p2 /= p3, p1 /= p3]
-            guess = ["A1", "A2", "A3"]
-            empty = (' ', 0)
-        in ( guess, createGameState (empty, empty, empty) (0, 0, 0) chords )
+initialGuess = ([], gameState (emptyChord, (-1,-1,-1)) pitches [] )
+        where pitches = [(note, octave) | note <- notes, octave <- octaves]
 
+-- the next guess is chosen from valid remaining guesses
 nextGuess :: ([String], GameState) -> (Int,Int,Int) -> ([String], GameState)
-nextGuess (guess, gs) (x, y, z)
-        | x == 0 && y == 0 && z == 0 = let newGs = deleteAllPitches (guess2chord guess) (deleteAllOctaves (guess2chord guess) (deleteAllNotes (guess2chord guess) gs))
-                                  in (gs2guess newGs, newGs) -- remove all guess data from gs
-        | x == 0 && y == 0 = let newGs = deleteAllPitches (guess2chord guess) (deleteAllNotes (guess2chord guess) gs)
-                                  in (gs2guess newGs, newGs) -- remove all pitches + notes from gs
-        | x == 0 && z == 0 = let newGs = deleteAllPitches (guess2chord guess) (deleteAllOctaves (guess2chord guess) gs)
-                                  in (gs2guess newGs, newGs) -- remove all pitches + octaves from gs
-        | x == 0 = let newGs = deleteAllPitches (guess2chord guess) gs
-                                  in (gs2guess newGs, newGs) -- remove all pitches from gs
-        | y == 0 = let newGs = deleteAllNotes (guess2chord guess) gs
-                                  in (gs2guess newGs, newGs) -- remove all notes from gs
-        | z == 0 = let newGs = deleteAllOctaves (guess2chord guess) gs
-                                  in (gs2guess newGs, newGs)  -- remove all octaves from gs
-        | otherwise = let newgs = deleteChord (guess2chord guess) gs
-                      in (gs2guess newgs, newgs)
+nextGuess (guess, gs) feedback = (guess, gs)
 
-generateGuess :: GameState -> Chord
-generateGuess (chord, feedback, chords)
 
-correctPitches :: GameState -> Int
-correctPitches (_, (a,b,c), _) = a
+-- -- -- -- -- -- -- -- -- --      ~Refinery~     -- -- -- -- -- -- -- -- -- --
 
-invalidNotes :: GameState -> Int
-invalidNotes (_, (a,b,c), _) = b
 
-invalidOctaves :: GameState -> Int
-invalidOctaves (_, (a,b,c), _) = c
+-- -- -- -- -- -- -- -- -- -- ~Utility Functions~ -- -- -- -- -- -- -- -- -- --
+-- swap between internal and external chord representation
+chord2string :: Chord -> [String]
+chord2string ( (n1, o1), (n2, o2), (n3, o3) )
+        = [[n1] ++ show o1, [n2] ++ show o2, [n3] ++ show o3]
 
-deleteChord :: Chord -> GameState -> GameState
-deleteChord c (chord, feedback, lst) = createGameState chord feedback (delete c lst)
+-- swap between external and internal chord representation
+string2chord :: [String] -> Chord
+string2chord lst = (p !! 0, p !! 1, p !! 2)
+        where p = map string2pitch lst
 
-deleteAllPitches :: Chord -> GameState -> GameState
-deleteAllPitches (p1, p2, p3) gs = deletePitch p1 (deletePitch p2 (deletePitch p3 gs))
-
-deletePitch :: Pitch -> GameState -> GameState
-deletePitch pitch (chord, feedback, chords) = createGameState chord feedback (filter (\(x,y,z) -> x /= pitch || y /= pitch || z /= pitch) chords)
-
--- delete all octaves in a chord from the gamestate
-deleteAllOctaves :: Chord -> GameState -> GameState
-deleteAllOctaves (p1, p2, p3) gs = deleteOctave p1 (deleteOctave p2 (deleteOctave p3 gs))
-
--- delete an octave from the gamestate
-deleteOctave :: Pitch -> GameState -> GameState
-deleteOctave (note, octave) (chord, feedback, chords) = createGameState chord feedback (filter (\((x,a),(y,b),(z,c)) -> a /= octave || b /= octave || c /= octave) chords)
-
--- delete all notes in a chord from the gamestate
-deleteAllNotes :: Chord -> GameState -> GameState
-deleteAllNotes (p1, p2, p3) gs = deleteNote p1 (deleteNote p2 (deleteNote p3 gs))
-
--- delete a note from the gamestate
-deleteNote :: Pitch -> GameState -> GameState
-deleteNote (note, octave) (chord, feedback, chords) = createGameState chord feedback (filter (\((x,a),(y,b),(z,c)) -> x /= note || y /= note || z /= note) chords)
-
-pitch2string :: Pitch -> String
-pitch2string (note, octave) = [note] ++ show octave
-
+-- swap between external and internal pitch representation
 string2pitch :: String -> Pitch
 string2pitch (x:xs) = (x, digitToInt (head xs))
 
-gs2guess :: GameState -> [String]
-gs2guess (x, y, z) = head (map chord2guess z)
-
-guess2chord :: [String] -> Chord
-guess2chord lst = let p = map string2pitch lst
-                  in (p !! 0, p !! 1, p !! 2)
-
-chord2guess :: Chord -> [String]
-chord2guess (p1,p2,p3) = [pitch2string p1, pitch2string p2, pitch2string p3]
-
-createGameState :: Chord -> Feedback -> [Chord] -> GameState
-createGameState chord feedback chords = (chord, feedback, chords)
+-- create a gamestate from params
+gameState :: (Chord, Feedback) -> [Pitch] -> [Pitch] -> GameState
+gameState (guess, feedback) valid known = ((guess, feedback), valid, known)
