@@ -1,95 +1,210 @@
--- ChordProbe
--- Jack Kaloger, August 2017
+-- == == == == == == == == ==    ~Chord Probe~    == == == == == == == == --
+-- == == == == == == == == ==    ~Jack Kaloger~   == == == == == == == == --
+-- == == == == == == == == ==    ~August 2017~    == == == == == == == == --
+
 module Proj1 (initialGuess, nextGuess, GameState) where
 
-import Data.Char
 import Data.List
+import Data.Char
 
-type Pitch = (Char, Int)
+-- -- -- -- -- -- -- -- -- --       ~Types~       -- -- -- -- -- -- -- -- --
+
+type Note = Char
+type Octave = Int
+type Pitch = (Note, Octave)
 type Chord = (Pitch, Pitch, Pitch)
-type Feedback = (Int, Int, Int) -- (p,n,o) correct
-type GameState = (Chord, Feedback, [Chord]) -- guess, feedback, chords left
+type Feedback = (Chord, (Int, Int, Int))
+-- (previous guess and feedback),(Valid Chords)
+data GameState = State ( Feedback,  [Chord]) | Start deriving (Show)
 
-notes = ['A','B','C','D','E','F','G']
+-- -- -- -- -- -- -- -- -- --     ~Constants~     -- -- -- -- -- -- -- -- --
 
+-- all possible notes and octaves
+notes :: [Char]
+notes = ['A', 'B', 'C', 'D', 'E', 'F', 'G']
+
+octaves :: [Int]
+octaves = [1..3]
+
+-- -- -- -- -- -- -- -- -- --   ~Main Functions~  -- -- -- -- -- -- -- -- --
+
+-- make the initial guess
 initialGuess :: ([String], GameState)
-initialGuess = 
-        let chords = 
-                let pitches = [(note, octave) | note <- notes, octave <- [1..3]]
-                in [(p1, p2, p3) | p1 <- pitches, p2 <- pitches, p3 <- pitches, p1 /= p2, p2 /= p3, p1 /= p3]
-            guess = ["A1", "A2", "A3"]
-            empty = (' ', 0)
-        in ( guess, createGameState (empty, empty, empty) (0, 0, 0) chords )
+initialGuess = (["A1", "B1", "C1"], Start)
 
+-- our next guess is based on a refined list of possible chords
 nextGuess :: ([String], GameState) -> (Int,Int,Int) -> ([String], GameState)
-nextGuess (guess, gs) (x, y, z)
-        | x == 0 && y == 0 && z == 0 = let newGs = deleteAllPitches (guess2chord guess) (deleteAllOctaves (guess2chord guess) (deleteAllNotes (guess2chord guess) gs))
-                                  in (gs2guess newGs, newGs) -- remove all guess data from gs
-        | x == 0 && y == 0 = let newGs = deleteAllPitches (guess2chord guess) (deleteAllNotes (guess2chord guess) gs)
-                                  in (gs2guess newGs, newGs) -- remove all pitches + notes from gs
-        | x == 0 && z == 0 = let newGs = deleteAllPitches (guess2chord guess) (deleteAllOctaves (guess2chord guess) gs)
-                                  in (gs2guess newGs, newGs) -- remove all pitches + octaves from gs
-        | x == 0 = let newGs = deleteAllPitches (guess2chord guess) gs
-                                  in (gs2guess newGs, newGs) -- remove all pitches from gs
-        | y == 0 = let newGs = deleteAllNotes (guess2chord guess) gs
-                                  in (gs2guess newGs, newGs) -- remove all notes from gs
-        | z == 0 = let newGs = deleteAllOctaves (guess2chord guess) gs
-                                  in (gs2guess newGs, newGs)  -- remove all octaves from gs
-        | otherwise = let newgs = deleteChord (guess2chord guess) gs
-                      in (gs2guess newgs, newgs)
+nextGuess ( guess, Start ) ( p, n, o ) -- Start state has to generate chords
+    = (makeGuess chords, State ( (string2chord guess, (p,n,o)), chords))
+        where chords = refine Start ( string2chord guess, (p,n+p,o+p) )
+nextGuess ( guess, gs ) ( p, n, o ) -- otherwise we refine as usual
+    = (makeGuess chords, State ( (string2chord guess, (p,n,o)), chords))
+        where chords = refine gs ( string2chord guess, (p,n+p,o+p) )
 
-generateGuess :: GameState -> Chord
-generateGuess (chord, feedback, chords)
+-- -- -- -- -- -- -- -- -- -- Refining Functions~ -- -- -- -- -- -- -- -- --
+-- grabs a guess from valid chords, making the highest entropy guess
+makeGuess :: [Chord] -> [String]
+makeGuess [] = []
+makeGuess (c:cs) = chord2string (head (msort (c:cs)))
 
-correctPitches :: GameState -> Int
-correctPitches (_, (a,b,c), _) = a
+-- we want to refine the possible chords by enforcing pitches, notes
+-- and octaves we know to be in the chord, or removing pitches, notes
+-- and octaves we know are not in the list
+refine :: GameState -> Feedback -> [Chord]
+refine gs ((pp,nn,oo), (0,n,o)) -- none of the pitches are valid
+    = removePitch pp (refine gs ((pp,nn,oo), (-1,n,o)))
+refine gs ((pp,nn,oo), (p,0,o)) -- none of the notes are valid
+    = removeNote nn (refine gs ((pp,nn,oo), (p,-1,o)))
+refine gs ((pp,nn,oo), (p,n,0)) -- none of the octaves are valid
+    = removeOctave oo (refine gs ((pp,nn,oo), (p,n,-1)))
+refine gs ((pp,nn,oo), (p,n,o)) -- ie, we know at least p pitches in chord
+    | p > 0 = enforcePitch p (pp,nn,oo) (refine gs ((pp,nn,oo), (-1,n,o)))
+    | n > 0 = enforceNote n (pp,nn,oo) (refine gs ((pp,nn,oo), (p,-1,o)))
+    | o > 0 = enforceOctave o (pp,nn,oo) (refine gs ((pp,nn,oo), (p,n,-1)))
+refine (State (_, chords)) (chord, _) = delete chord chords
+refine Start (chord, _) -- we need to generate our list of chords
+    = delete chord generateChords
 
-invalidNotes :: GameState -> Int
-invalidNotes (_, (a,b,c), _) = b
+-- delete chords without specified num pitches from chord
+enforcePitch :: Int -> Chord -> [Chord] -> [Chord]
+enforcePitch 1 (p1,p2,p3) =
+    -- return a list filtered by lambda exp
+    filter (\x -> pitchInChord p1 x ||
+                  pitchInChord p2 x ||
+                  pitchInChord p3 x)
+enforcePitch 2 (p1,p2,p3) =
+    filter (\x -> pitchInChord p1 x && pitchInChord p2 x ||
+                  pitchInChord p2 x && pitchInChord p3 x ||
+                  pitchInChord p1 x && pitchInChord p3 x) 
 
-invalidOctaves :: GameState -> Int
-invalidOctaves (_, (a,b,c), _) = c
+-- delete chords without specified num notes from chord
+enforceNote :: Int -> Chord -> [Chord] -> [Chord]
+enforceNote 1 (p1,p2,p3) =
+    filter (\x -> noteInChord p1 x || noteInChord p2 x || noteInChord p3 x)
+enforceNote 2 (p1,p2,p3) =
+    filter (\x -> (noteInChord p1 x && noteInChord p2 x) ||
+                  (noteInChord p2 x && noteInChord p3 x) ||
+                  (noteInChord p1 x && noteInChord p3 x))
+enforceNote 3 (p1,p2,p3) =
+    filter (\x -> noteInChord p1 x && noteInChord p2 x && noteInChord p3 x)
 
-deleteChord :: Chord -> GameState -> GameState
-deleteChord c (chord, feedback, lst) = createGameState chord feedback (delete c lst)
+-- delete chords without specified num octaves from chord
+enforceOctave :: Int -> Chord -> [Chord] -> [Chord]
 
-deleteAllPitches :: Chord -> GameState -> GameState
-deleteAllPitches (p1, p2, p3) gs = deletePitch p1 (deletePitch p2 (deletePitch p3 gs))
+enforceOctave 1 (p1,p2,p3) =
+    filter (\x -> octaveInChord p1 x ||
+                  octaveInChord p2 x ||
+                  octaveInChord p3 x)
+enforceOctave 2 (p1,p2,p3) =
+    filter (\x -> octaveInChord p1 x && octaveInChord p2 x ||
+                  octaveInChord p2 x && octaveInChord p3 x ||
+                  octaveInChord p1 x && octaveInChord p3 x)
+enforceOctave 3 (p1,p2,p3) =
+    filter (\x -> octaveInChord p1 x &&
+                  octaveInChord p2 x &&
+                  octaveInChord p3 x)
 
-deletePitch :: Pitch -> GameState -> GameState
-deletePitch pitch (chord, feedback, chords) = createGameState chord feedback (filter (\(x,y,z) -> x /= pitch || y /= pitch || z /= pitch) chords)
+-- delete chords with pitches known to be false
+removePitch :: Pitch -> [Chord] -> [Chord]
+removePitch p =
+    filter (\(x,y,z) -> x /= p && y /= p && z /= p)
 
--- delete all octaves in a chord from the gamestate
-deleteAllOctaves :: Chord -> GameState -> GameState
-deleteAllOctaves (p1, p2, p3) gs = deleteOctave p1 (deleteOctave p2 (deleteOctave p3 gs))
+-- delete chords containing specified note
+removeNote :: Pitch -> [Chord] -> [Chord]
+removeNote (n,o) =
+    filter (\((xn,_),(yn,_),(zn,_)) ->
+        xn /= n && yn /= n && zn /= n)
 
--- delete an octave from the gamestate
-deleteOctave :: Pitch -> GameState -> GameState
-deleteOctave (note, octave) (chord, feedback, chords) = createGameState chord feedback (filter (\((x,a),(y,b),(z,c)) -> a /= octave || b /= octave || c /= octave) chords)
+-- delete chords containing specified octave
+removeOctave :: Pitch -> [Chord] -> [Chord]
+removeOctave (n,o) =
+    filter (\((_,xo),(_,yo),(_,zo)) ->
+        xo /= o && yo /= o && zo /= o)
 
--- delete all notes in a chord from the gamestate
-deleteAllNotes :: Chord -> GameState -> GameState
-deleteAllNotes (p1, p2, p3) gs = deleteNote p1 (deleteNote p2 (deleteNote p3 gs))
+-- -- -- -- -- -- -- -- -- -- ~Utility Functions~ -- -- -- -- -- -- -- -- --
+-- generate every possible pitch combination (chord)
+generateChords :: [Chord]
+generateChords = checkDupes [(p1,p2,p3) | p1 <- pitches,
+                                          p2 <- pitches,
+                                          p3 <- pitches,
+                                          p1 /= p2,
+                                          p2 /= p3, 
+                                          p1 /= p3]
+    where pitches = [(note, octave) | note <- notes,
+                                      octave <- octaves]
 
--- delete a note from the gamestate
-deleteNote :: Pitch -> GameState -> GameState
-deleteNote (note, octave) (chord, feedback, chords) = createGameState chord feedback (filter (\((x,a),(y,b),(z,c)) -> x /= note || y /= note || z /= note) chords)
+-- remove duplicate chords
+checkDupes :: [Chord] -> [Chord]
+checkDupes [] = []
+checkDupes (c:cs) = c : checkDupes (filter (\x -> not(eqChord c x)) cs)
 
-pitch2string :: Pitch -> String
-pitch2string (note, octave) = [note] ++ show octave
+-- check if two chords are equivalent
+eqChord :: Chord -> Chord -> Bool
+eqChord (p11,p12,p13) c
+    = pitchInChord p11 c &&
+      pitchInChord p12 c &&
+      pitchInChord p13 c
 
+-- check if provided pitch is a part of the chord
+pitchInChord :: Pitch -> Chord -> Bool
+pitchInChord p (p1,p2,p3) =
+    (p == p1) || (p == p2) || (p == p3)
+
+-- check if provided note is a part of the chord
+noteInChord :: Pitch -> Chord -> Bool
+noteInChord (n,o) ((n1, o1), (n2,o2), (n3,o3)) =
+    (n == n1) || (n == n2) || (n == n3)
+
+-- check if provided octave is a part of the chord
+octaveInChord :: Pitch -> Chord -> Bool
+octaveInChord (n,o) ((n1, o1), (n2,o2), (n3,o3)) =
+    (o == o1) || (o == o2) || (o == o3)
+
+-- swap between internal and external chord representation
+chord2string :: Chord -> [String]
+chord2string ((n1, o1), (n2, o2), (n3, o3))
+    = [[n1] ++ show o1, [n2] ++ show o2, [n3] ++ show o3]
+
+-- swap between external and internal chord representation
+string2chord :: [String] -> Chord
+string2chord lst = (p !! 0, p !! 1, p !! 2)
+    where p = map string2pitch lst
+
+-- swap between external and internal pitch representation
 string2pitch :: String -> Pitch
 string2pitch (x:xs) = (x, digitToInt (head xs))
 
-gs2guess :: GameState -> [String]
-gs2guess (x, y, z) = head (map chord2guess z)
+-- swap between internal and external pitch representation
+pitch2string :: Pitch -> String
+pitch2string (note, octave) = [note] ++ show octave
 
-guess2chord :: [String] -> Chord
-guess2chord lst = let p = map string2pitch lst
-                  in (p !! 0, p !! 1, p !! 2)
+-- merge sort function
+msort :: [Chord] -> [Chord]
+msort [] = []
+msort (x:xs)
+    | length (x:xs) > 1 = merge (msort left) (msort right)
+    | otherwise = (x:xs)
+    where left = take (div (length (x:xs)) 2) (x:xs)
+          right = drop (div (length (x:xs)) 2) (x:xs)
 
-chord2guess :: Chord -> [String]
-chord2guess (p1,p2,p3) = [pitch2string p1, pitch2string p2, pitch2string p3]
+merge :: [Chord] -> [Chord] -> [Chord]
+merge lst [] = lst
+merge [] lst = lst
+merge (x:xs) (y:ys)
+    | entropy x > entropy y = x:merge xs (y:ys)
+    | otherwise = y:merge ys (x:xs)
 
-createGameState :: Chord -> Feedback -> [Chord] -> GameState
-createGameState chord feedback chords = (chord, feedback, chords)
+-- we want to preferentially select chords that are different..
+entropy :: Chord -> Int
+entropy ((n1,o1), (n2,o2), (n3,o3))
+    | n1 == n2 && n1 == n3 && n1 == n2 = 3
+    | o1 == o2 && o1 == o3 && o1 == o2 = 3
+    | n1 == n2 && n1 == n3 ||
+      n2 == n1 && n2 == n3 ||
+      n3 == n1 && n3 == n2 = 2
+    | o1 == o2 && o1 == o3 ||
+      o2 == o1 && o2 == o3 ||
+      o3 == o1 && o3 == o2 = 2
+    | otherwise = 1
+
+
